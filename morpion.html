@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Morpion en Ligne</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: #f0f0f0;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 { margin-bottom: 10px; }
+  a.back-link {
+    margin-bottom: 15px;
+    color: #4CAF50;
+    text-decoration: none;
+    font-weight: bold;
+  }
+  a.back-link:hover { text-decoration: underline; }
+  #controls {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  input, button {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+  button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover { background-color: #45a049; }
+  button:disabled { background-color: #999; cursor: not-allowed; }
+  #status {
+    font-weight: bold;
+    margin-bottom: 15px;
+    color: #333;
+    text-align: center;
+  }
+  #board {
+    width: 300px;
+    height: 300px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 6px;
+    background-color: #333;
+    padding: 6px;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  }
+  .cell {
+    background-color: #fff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 48px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    user-select: none;
+  }
+  .cell.taken { cursor: not-allowed; }
+  .cell.X { color: #2196F3; }
+  .cell.O { color: #e53935; }
+  .cell.win { background-color: #c8f7c5; }
+  #restart-container { margin-top: 20px; }
+</style>
+</head>
+<body>
+  <a class="back-link" href="index.html">&larr; Retour à l'accueil</a>
+  <h1>Morpion à distance</h1>
+  <div id="controls">
+    <button onclick="createGame()">Créer une partie</button>
+    <span>ou</span>
+    <input type="text" id="join-id" placeholder="Entrer l'ID de partie">
+    <button onclick="joinGame()">Rejoindre</button>
+  </div>
+  <div id="status">Statut : Non connecté</div>
+  <div id="board"></div>
+  <div id="restart-container">
+    <button id="restart-btn" onclick="requestRestart()" disabled>Rejouer</button>
+  </div>
+
+<script>
+  const WIN_LINES = [
+    [0,1,2],[3,4,5],[6,7,8],
+    [0,3,6],[1,4,7],[2,5,8],
+    [0,4,8],[2,4,6]
+  ];
+
+  let boardState = Array(9).fill(null);
+  let peer = null;
+  let conn = null;
+  let mySymbol = null;      // 'X' ou 'O'
+  let currentTurn = 'X';    // X commence toujours
+  let gameOver = false;
+
+  function renderBoard() {
+    const boardEl = document.getElementById('board');
+    boardEl.innerHTML = '';
+    const winningLine = getWinningLine();
+    for (let i = 0; i < 9; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      if (boardState[i]) {
+        cell.classList.add('taken', boardState[i]);
+        cell.textContent = boardState[i];
+      }
+      if (winningLine && winningLine.includes(i)) {
+        cell.classList.add('win');
+      }
+      cell.addEventListener('click', () => handleCellClick(i));
+      boardEl.appendChild(cell);
+    }
+  }
+
+  function handleCellClick(i) {
+    if (!conn || !conn.open) {
+      alert("Connectez-vous avec un autre joueur pour jouer !");
+      return;
+    }
+    if (gameOver) return;
+    if (currentTurn !== mySymbol) return;
+    if (boardState[i]) return;
+
+    boardState[i] = mySymbol;
+    checkGameEnd();
+    currentTurn = currentTurn === 'X' ? 'O' : 'X';
+    updateStatus();
+    renderBoard();
+    sendGameState();
+  }
+
+  function getWinningLine() {
+    for (const line of WIN_LINES) {
+      const [a, b, c] = line;
+      if (boardState[a] && boardState[a] === boardState[b] && boardState[a] === boardState[c]) {
+        return line;
+      }
+    }
+    return null;
+  }
+
+  function checkGameEnd() {
+    if (getWinningLine()) {
+      gameOver = true;
+      document.getElementById('restart-btn').disabled = false;
+    } else if (boardState.every(c => c !== null)) {
+      gameOver = true;
+      document.getElementById('restart-btn').disabled = false;
+    }
+  }
+
+  function createGame() {
+    peer = new Peer();
+    peer.on('open', (id) => {
+      mySymbol = 'X';
+      document.getElementById('status').innerText = `ID de partie : ${id} (Partagez cet ID)`;
+    });
+    peer.on('connection', (connection) => {
+      conn = connection;
+      setupConnection();
+    });
+  }
+
+  function joinGame() {
+    const joinId = document.getElementById('join-id').value;
+    if (!joinId) return alert("Veuillez entrer un ID de partie.");
+    peer = new Peer();
+    peer.on('open', () => {
+      mySymbol = 'O';
+      conn = peer.connect(joinId);
+      setupConnection();
+    });
+  }
+
+  function setupConnection() {
+    conn.on('open', () => {
+      updateStatus();
+      if (mySymbol === 'X') sendGameState();
+    });
+    conn.on('data', (data) => {
+      if (data.type === 'state') {
+        boardState = data.boardState;
+        currentTurn = data.currentTurn;
+        gameOver = data.gameOver;
+        document.getElementById('restart-btn').disabled = !gameOver;
+        updateStatus();
+        renderBoard();
+      } else if (data.type === 'restart') {
+        resetLocalState();
+        sendGameState();
+      }
+    });
+  }
+
+  function sendGameState() {
+    if (conn && conn.open) {
+      conn.send({ type: 'state', boardState, currentTurn, gameOver });
+    }
+  }
+
+  function requestRestart() {
+    resetLocalState();
+    if (conn && conn.open) {
+      conn.send({ type: 'restart' });
+    }
+  }
+
+  function resetLocalState() {
+    boardState = Array(9).fill(null);
+    currentTurn = 'X';
+    gameOver = false;
+    document.getElementById('restart-btn').disabled = true;
+    updateStatus();
+    renderBoard();
+  }
+
+  function updateStatus() {
+    if (!conn || !conn.open) {
+      document.getElementById('status').innerText = "Statut : Non connecté";
+      return;
+    }
+    if (gameOver) {
+      const line = getWinningLine();
+      if (line) {
+        const winner = boardState[line[0]];
+        const text = winner === mySymbol ? "Vous avez gagné !" : "Vous avez perdu.";
+        document.getElementById('status').innerText = `Partie terminée : ${text}`;
+      } else {
+        document.getElementById('status').innerText = "Partie terminée : Match nul.";
+      }
+      return;
+    }
+    const turnText = currentTurn === mySymbol ? "À VOTRE TOUR" : "Tour de l'adversaire";
+    document.getElementById('status').innerText = `Connecté ! Vous jouez les ${mySymbol}. (${turnText})`;
+  }
+
+  renderBoard();
+</script>
+</body>
+</html>
